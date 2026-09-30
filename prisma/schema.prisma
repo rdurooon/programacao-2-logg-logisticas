@@ -15,6 +15,7 @@ model User {
     email     String   @unique
     password  String   
     roles     Role[]   @relation("users_roles")
+    packages  Package[]
     createdAt DateTime @default(now())
     updatedAt DateTime @updatedAt
 
@@ -30,3 +31,43 @@ model Role {
 
     @@map("roles")
 }
+
+model Package {
+    id String @id @default(uuid())
+    code String @unique
+    description String
+    dimensions String
+    weight Float
+    user User @relation("user_package")
+    address Address @relation("address_package")
+    status String @default("Pendente")
+    createdAt DateTime @default(now())
+    updatedAt DateTime @updatedAt
+
+    @@map("packages")
+}
+
+model Address {
+    id String @id @default(uuid())
+    cep String
+    logradouro String
+    numero String
+    complemento String
+    bairro String
+    cidade String
+    estado String
+    pais String
+    packages Package[]
+
+    @@map("address")
+}
+
+model Enterprise {
+    id String @id @default(uuid())
+    name String 
+    cnpj String
+    telefone String
+
+    @@map("enterprises")
+}
+

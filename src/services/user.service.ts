@@ -26,7 +26,7 @@ export class UserService {
     const where = params.where ?
     {
         OR: Object.entries(params.where).map(([key, value]) => ({
-            [key]: { contains: value, mode: Prisma.QueryMode.insensitive },
+            [key]: { contains: value, mode: 'insensitive' },
         })),
     }
     : {};
