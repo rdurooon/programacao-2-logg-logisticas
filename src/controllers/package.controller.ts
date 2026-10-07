@@ -1,5 +1,7 @@
 import { Request, Response } from 'express';
-import { Package, PackageService } from '@/services/package.services'
+import { Prisma } from '@prisma/client';
+import { AppError } from '@/types';
+import { PackageService, packageSchema, packageUpdateSchema } from '@/services/package.services'
 
 export class PackageController {
     private packageService: PackageService;
@@ -10,11 +12,11 @@ export class PackageController {
 
     public getAllPackages = async (req: Request, res: Response): Promise<void> => {
         try {
-            const { page, limit, q } = req.query as any;
+            const { page, limit, q } = req.query;
             const packages = await this.packageService.getAllPackages({
-                page: Number(page),
-                limit: Number(limit),
-                where: q
+                ...(typeof page === 'string' ? { page: Number(page) } : {}),
+                ...(typeof limit === 'string' ? { limit: Number(limit) } : {}),
+                ...(typeof q === 'string' ? { where: q } : {})
             });
             res.status(200).json(packages);
         } catch (error) {
@@ -37,27 +39,35 @@ export class PackageController {
     };
 
     public addPackage = async (req: Request, res: Response): Promise<void> => {
+        const parsed = packageSchema.safeParse(req.body);
+        if (!parsed.success) {
+            res.status(400).json({ message: 'Dados inválidos', errors: parsed.error.issues });
+            return;
+        }
         try {
-            const packageData = req.body;
-            const newPackage = await this.packageService.addPackage(packageData);
+            const newPackage = await this.packageService.addPackage(parsed.data);
             res.status(201).json(newPackage);
         } catch (error) {
-            res.status(500).json({ message: 'Error adding package'});
+            this.handleError(res, error, 'Erro ao cadastrar pacote');
         }
     };
 
     public updatePackage = async (req: Request, res: Response): Promise<void> => {
+        const parsed = packageUpdateSchema.safeParse(req.body);
+        if (!parsed.success) {
+            res.status(400).json({ message: 'Dados inválidos', errors: parsed.error.issues });
+            return;
+        }
         try {
             const packageId = req.params.id as string;
-            const packageData = req.body;
-            const updatedPackage = await this.packageService.updatePackage(packageId, packageData);
+            const updatedPackage = await this.packageService.updatePackage(packageId, parsed.data);
             if(updatedPackage) {
                 res.status(200).json(updatedPackage);
             } else {
                 res.status(404).json({ message: 'Package not found'});
             }
         } catch (error) {
-            res.status(500).json({ message: 'Error updating package', error });
+            this.handleError(res, error, 'Erro ao atualizar pacote');
         }
     };
 
@@ -71,7 +81,19 @@ export class PackageController {
         res.status(404).json({ message: 'Package not found' });
       }
     } catch (error) {
-      res.status(500).json({ message: 'Error deleting package', error });
+            this.handleError(res, error, 'Erro ao excluir pacote');
     }
   };
+
+    private handleError(res: Response, error: unknown, message: string): void {
+        if (error instanceof AppError) {
+            res.status(error.statusCode).json({ message: error.message });
+            return;
+        }
+        if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2003') {
+            res.status(404).json({ message: 'Cliente ou endereço não encontrado' });
+            return;
+        }
+        res.status(500).json({ message, error });
+    }
 }

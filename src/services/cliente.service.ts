@@ -1,92 +1,173 @@
 import prisma from "@/lib/prisma";
-import { Cliente, Prisma } from "@prisma/client";
+import { Prisma } from "@prisma/client";
 import { z } from "zod";
+import { AppError } from "@/types";
 
-const clienteSchema = z.object({
-    nome: z.string()
-        .min(5, 'O nome deve ter pelo menos 5 caracteres')
-        .max(100),
+const nomeSchema = z.string().min(5, 'O nome deve ter pelo menos 5 caracteres').max(100);
+const cpfSchema = z.string().regex(/^\d{3}\.\d{3}\.\d{3}-\d{2}$/, 'CPF inválido');
+const cnpjSchema = z.string().regex(/^\d{2}\.\d{3}\.\d{3}\/\d{4}-\d{2}$/, 'CNPJ inválido');
+
+export const clienteSchema = z.discriminatedUnion('tipoCliente', [
+    z.object({
+        tipoCliente: z.literal('F'),
+        nome: nomeSchema,
+        fisica: z.object({
+            cpf: cpfSchema,
+            rg: z.string().max(20).optional(),
+        }),
+    }),
+    z.object({
+        tipoCliente: z.literal('J'),
+        nome: nomeSchema,
+        juridica: z.object({
+            cnpj: cnpjSchema,
+            inscricaoEstadual: z.string().max(20).optional(),
+        }),
+    }),
+]);
+
+export const clienteUpdateSchema = z.object({
+    nome: nomeSchema.optional(),
     fisica: z.object({
-        cpf: z.string()
-            .regex(/^\d{3}\.\d{3}\.\d{3}-\d{2}$/, 'CPF inválido')
-            .optional(),
-        rg: z.string()
-            .max(20, 'O RG deve ter no máximo 20 caracteres')
-            .optional(),
+        cpf: cpfSchema.optional(),
+        rg: z.string().max(20).optional(),
     }).optional(),
     juridica: z.object({
-        cnpj: z.string()
-            .regex(/^\d{2}\.\d{3}\.\d{3}\/\d{4}-\d{2}$/, 'CNPJ inválido')
-            .optional(),
-        inscricaoEstadual: z.string()
-            .max(20, 'A inscrição estadual deve ter no máximo 20 caracteres')
-            .optional(),
+        cnpj: cnpjSchema.optional(),
+        inscricaoEstadual: z.string().max(20).optional(),
     }).optional(),
-    // email: z.string().email().optional(),
-    // telefone: z.string().max(20).optional(),
-    // endereco: z.string().max(200).optional(),
-    tipoCliente: z.enum(['F', 'J'])
+}).refine((data) => !(data.fisica && data.juridica), {
+    message: 'Informe dados de pessoa física ou jurídica, não ambos',
 });
 
-export type ClienteInput = z.infer<typeof clienteSchema> & Prisma.ClienteCreateInput;
+export type ClienteInput = z.infer<typeof clienteSchema>;
+export type ClienteUpdateInput = z.infer<typeof clienteUpdateSchema>;
+
+const clienteInclude = {
+    pessoa: { include: { pessoaFisica: true, pessoaJuridica: true } },
+    addresses: true,
+} as const;
 
 export class ClienteService {
     async getAllClientes(params: {
-        skip?: number;
+        page?: number;
         limit?: number;
-        where?: any;
-        orderBy?: any
-        // Prisma.ClienteOrderByWithRelationInput | Prisma.ClienteOrderByWithRelationInput[];
-    }): Promise<Cliente[]> {
-        const { skip = 0, limit = 10, where, orderBy } = params;
-        const clientes = await prisma.cliente.findMany({
-            skip,
+        q?: string;
+    }) {
+        const page = Number.isInteger(params.page) && params.page! > 0 ? params.page! : 1;
+        const limit = Number.isInteger(params.limit) && params.limit! > 0 ? params.limit! : 10;
+        const search = params.q?.trim();
+        const where: Prisma.ClienteWhereInput = search ? {
+            OR: [
+                { id: { contains: search, mode: 'insensitive' } },
+                { pessoa: { is: { pessoaFisica: { is: { nome: { contains: search, mode: 'insensitive' } } } } } },
+                { pessoa: { is: { pessoaJuridica: { is: { razaoSocial: { contains: search, mode: 'insensitive' } } } } } },
+                { pessoa: { is: { pessoaFisica: { is: { cpf: { contains: search } } } } } },
+                { pessoa: { is: { pessoaJuridica: { is: { cnpj: { contains: search } } } } } },
+            ],
+        } : {};
+
+        return prisma.cliente.findMany({
+            skip: (page - 1) * limit,
             take: limit,
+            where,
+            include: clienteInclude,
+            orderBy: { createdAt: 'desc' },
         });
-        return clientes;
     }
 
-    async getClienteById(id: string): Promise<Cliente | null> {
-        const cliente = await prisma.cliente.findUnique({
+    async getClienteById(id: string) {
+        return prisma.cliente.findUnique({
             where: { id },
+            include: clienteInclude,
         });
-        return cliente;
     }
 
-    async createCliente(data: ClienteInput): Promise<Cliente> {
-        const pessoa = await prisma.pessoa.create({
-            data: {
-                tipoPessoa: data.tipoCliente === 'F' ? 'F' : 'J',
-            },
-        });
-        const newCliente = data.tipoCliente === 'F' 
-            ? await prisma.cliente.create({
-                data: {
-                    ...data,
-                    pessoaId: pessoa.id,
+    async createCliente(data: ClienteInput) {
+        const clienteData: Prisma.PessoaCreateInput = data.tipoCliente === 'F'
+            ? {
+                tipoPessoa: data.tipoCliente,
+                pessoaFisica: {
+                    create: {
+                        nome: data.nome,
+                        cpf: data.fisica.cpf,
+                        ...(data.fisica.rg ? { rg: data.fisica.rg } : {}),
+                    },
                 },
-            })
-            : await prisma.cliente.create({
-                data: {
-                    ...data,
-                    pessoaId: pessoa.id,
+            }
+            : {
+                tipoPessoa: data.tipoCliente,
+                pessoaJuridica: {
+                    create: {
+                        razaoSocial: data.nome,
+                        cnpj: data.juridica.cnpj,
+                        ...(data.juridica.inscricaoEstadual ? { inscricaoEstadual: data.juridica.inscricaoEstadual } : {}),
+                    },
                 },
+            };
+
+        return prisma.$transaction(async (transaction) => {
+            const pessoa = await transaction.pessoa.create({ data: clienteData });
+            return transaction.cliente.create({
+                data: { pessoa: { connect: { id: pessoa.id } } },
+                include: clienteInclude,
             });
-        return newCliente;
+        });
     }
 
-    async updateCliente(id: string, data: Prisma.ClienteUpdateInput): Promise<Cliente | null> {
-        const updatedCliente = await prisma.cliente.update({
-            where: { id },
-            data,
+    async updateCliente(id: string, data: ClienteUpdateInput) {
+        return prisma.$transaction(async (transaction) => {
+            const cliente = await transaction.cliente.findUnique({
+                where: { id },
+                include: clienteInclude,
+            });
+            if (!cliente) return null;
+
+            const pessoaFisica = cliente.pessoa.pessoaFisica;
+            const pessoaJuridica = cliente.pessoa.pessoaJuridica;
+            if ((data.fisica && !pessoaFisica) || (data.juridica && !pessoaJuridica)) {
+                throw new AppError('Os dados informados não correspondem ao tipo do cliente', 400);
+            }
+
+            const pessoaData: Prisma.PessoaUpdateInput = {};
+            if (pessoaFisica) {
+                const fisicaData = {
+                    ...(data.nome ? { nome: data.nome } : {}),
+                    ...(data.fisica?.cpf ? { cpf: data.fisica.cpf } : {}),
+                    ...(data.fisica?.rg ? { rg: data.fisica.rg } : {}),
+                };
+                if (Object.keys(fisicaData).length > 0) {
+                    pessoaData.pessoaFisica = { update: fisicaData };
+                }
+            }
+            if (pessoaJuridica) {
+                const juridicaData = {
+                    ...(data.nome ? { razaoSocial: data.nome } : {}),
+                    ...(data.juridica?.cnpj ? { cnpj: data.juridica.cnpj } : {}),
+                    ...(data.juridica?.inscricaoEstadual ? { inscricaoEstadual: data.juridica.inscricaoEstadual } : {}),
+                };
+                if (Object.keys(juridicaData).length > 0) {
+                    pessoaData.pessoaJuridica = { update: juridicaData };
+                }
+            }
+
+            if (Object.keys(pessoaData).length > 0) {
+                await transaction.pessoa.update({ where: { id: cliente.pessoaId }, data: pessoaData });
+            }
+
+            return transaction.cliente.findUnique({
+                where: { id },
+                include: clienteInclude,
+            });
         });
-        return updatedCliente;
     }
 
-    async deleteCliente(id: string): Promise<Cliente | null> {
-        const deletedCliente = await prisma.cliente.delete({
-            where: { id },
+    async deleteCliente(id: string) {
+        return prisma.$transaction(async (transaction) => {
+            const cliente = await transaction.cliente.findUnique({ where: { id }, include: clienteInclude });
+            if (!cliente) return null;
+            await transaction.pessoa.delete({ where: { id: cliente.pessoaId } });
+            return cliente;
         });
-        return deletedCliente;
     }
 }
