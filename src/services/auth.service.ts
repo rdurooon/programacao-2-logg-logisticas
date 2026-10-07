@@ -40,7 +40,7 @@ export class AuthService {
     const authUser = toAuthUser(user);
     const token = signToken(authUser);
 
-    return { token, user };
+    return { token, user: authUser };
   }
 
   public async me(userId: string): Promise<User | null> {
