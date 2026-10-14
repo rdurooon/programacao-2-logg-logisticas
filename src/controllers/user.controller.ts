@@ -1,5 +1,7 @@
 import { Request, Response } from 'express';
-import { User, UserService } from '@/services/user.service';
+import { Prisma } from '@prisma/client';
+import { UserService, userSchema, userUpdateSchema } from '@/services/user.service';
+import { AppError } from '@/types';
 
 export class UserController {
   private userService: UserService;
@@ -38,27 +40,35 @@ export class UserController {
   };
 
   public createUser = async (req: Request, res: Response): Promise<void> => {
+    const parsed = userSchema.safeParse(req.body);
+    if (!parsed.success) {
+      res.status(400).json({ message: 'Dados inválidos', errors: parsed.error.issues });
+      return;
+    }
     try {
-      const userData = req.body;
-      const newUser = await this.userService.createUser(userData);
+      const newUser = await this.userService.createUser(parsed.data);
       res.status(201).json(newUser);
     } catch (error) {
-      res.status(500).json({ message: 'Error creating user', error });
+      this.handleError(res, error, 'Erro ao cadastrar usuário');
     }
   };
 
   public updateUser = async (req: Request, res: Response): Promise<void> => {
+    const parsed = userUpdateSchema.safeParse(req.body);
+    if (!parsed.success) {
+      res.status(400).json({ message: 'Dados inválidos', errors: parsed.error.issues });
+      return;
+    }
     try {
       const userId = req.params.id as string;
-      const userData = req.body;
-      const updatedUser = await this.userService.updateUser(userId, userData);
+      const updatedUser = await this.userService.updateUser(userId, parsed.data);
       if (updatedUser) {
         res.status(200).json(updatedUser);
       } else {
         res.status(404).json({ message: 'User not found' });
       }
     } catch (error) {
-      res.status(500).json({ message: 'Error updating user', error });
+      this.handleError(res, error, 'Erro ao atualizar usuário');
     }
   };
 
@@ -75,4 +85,20 @@ export class UserController {
       res.status(500).json({ message: 'Error deleting user', error });
     }
   };
+
+  private handleError(res: Response, error: unknown, message: string): void {
+    if (error instanceof AppError) {
+      res.status(error.statusCode).json({ message: error.message });
+      return;
+    }
+    if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002') {
+      res.status(409).json({ message: 'E-mail ou vínculo já está em uso' });
+      return;
+    }
+    if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2025') {
+      res.status(404).json({ message: 'Usuário ou cliente não encontrado' });
+      return;
+    }
+    res.status(500).json({ message });
+  }
 }   

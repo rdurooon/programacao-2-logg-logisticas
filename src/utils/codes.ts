@@ -1,5 +1,5 @@
-export const generateTrackingCode = async (): Promise<string> => {
-    const rngNumber = Math.floor(100000000 + Math.random() * + 900000000)
+import { randomBytes } from 'node:crypto';
 
-    return `BR${rngNumber}$BR}`
+export const generateTrackingCode = async (): Promise<string> => {
+    return `BR${randomBytes(10).toString('hex').toUpperCase()}`;
 }

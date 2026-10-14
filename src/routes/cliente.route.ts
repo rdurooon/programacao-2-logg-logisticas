@@ -1,8 +1,11 @@
 import { Router } from 'express';
 import { ClienteController } from '@/controllers/cliente.controller';
+import { authenticate, authorize } from '@/middlewares/auth';
+import { UserRole } from '@/types';
 
 const router = Router();
 const clienteController = new ClienteController();
+router.use(authenticate, authorize(UserRole.ADMIN, UserRole.LOGISTICS_MANAGER));
 
 router.get('/', clienteController.getAllClientes);
 router.get('/:id', clienteController.getClienteById);

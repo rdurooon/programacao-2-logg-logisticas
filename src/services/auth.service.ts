@@ -1,10 +1,8 @@
 import { z } from "zod";
 import prisma from '@/lib/prisma';
-import { Prisma } from "@prisma/client";
-import { comparePasswords, hashPassword } from "@/utils/password";
-import { toAuthUser } from "@/utils/user.mapper";
+import { comparePasswords } from "@/utils/password";
+import { toAuthUser, toPublicUser } from "@/utils/user.mapper";
 import { signToken } from "@/utils/jwt";
-import { User } from "./user.service";
 
 export const loginSchema = z.object({
   email: z.string().email("Invalid email address"),
@@ -32,7 +30,6 @@ export class AuthService {
     }
 
     const isPasswordValid = await comparePasswords(input.password, user.password);
-    console.log("isPasswordValid:", isPasswordValid); // Log the result
     if (!isPasswordValid) {
       throw new Error("Invalid email or password");
     }
@@ -43,7 +40,7 @@ export class AuthService {
     return { token, user: authUser };
   }
 
-  public async me(userId: string): Promise<User | null> {
+  public async me(userId: string) {
     const user = await prisma.user.findUnique({
       include: { roles: true },
       where: { id: userId },
@@ -53,6 +50,6 @@ export class AuthService {
       throw new Error("User not found");
     }
 
-    return user;
+    return toPublicUser(user);
   }
 }

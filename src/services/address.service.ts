@@ -3,7 +3,7 @@ import { z } from 'zod';
 import prisma from '@/lib/prisma';
 import { AppError } from '@/types';
 
-export const addressSchema = z.object({
+const addressFieldsSchema = z.object({
     clienteId: z.string().min(1, 'Cliente é obrigatório'),
     cep: z.string().min(1, 'CEP é obrigatório'),
     logradouro: z.string().min(1, 'Logradouro é obrigatório'),
@@ -13,9 +13,20 @@ export const addressSchema = z.object({
     cidade: z.string().min(1, 'Cidade é obrigatória'),
     estado: z.string().min(1, 'Estado é obrigatório'),
     pais: z.string().min(1, 'País é obrigatório'),
+    latitude: z.number().min(-90).max(90).optional(),
+    longitude: z.number().min(-180).max(180).optional(),
 });
 
-export const addressUpdateSchema = addressSchema.partial();
+const hasCoordinatePair = (data: { latitude?: number | undefined; longitude?: number | undefined }) =>
+    (data.latitude === undefined) === (data.longitude === undefined);
+
+export const addressSchema = addressFieldsSchema.refine(hasCoordinatePair, {
+    message: 'Latitude e longitude devem ser informadas juntas',
+});
+
+export const addressUpdateSchema = addressFieldsSchema.partial().refine(hasCoordinatePair, {
+    message: 'Latitude e longitude devem ser informadas juntas',
+});
 
 export type AddressInput = z.infer<typeof addressSchema>;
 export type AddressUpdateInput = z.infer<typeof addressUpdateSchema>;
@@ -54,9 +65,13 @@ export class AddressService {
     }
 
     async createAddress(data: AddressInput) {
+        const { latitude, longitude, ...addressData } = data;
         try {
             return await prisma.address.create({
-                data,
+                data: {
+                    ...addressData,
+                    ...(latitude !== undefined && longitude !== undefined ? { latitude, longitude } : {}),
+                },
                 include: { cliente: true },
             });
         } catch (error) {
@@ -89,6 +104,8 @@ export class AddressService {
                 ...(data.cidade !== undefined ? { cidade: data.cidade } : {}),
                 ...(data.estado !== undefined ? { estado: data.estado } : {}),
                 ...(data.pais !== undefined ? { pais: data.pais } : {}),
+                ...(data.latitude !== undefined ? { latitude: data.latitude } : {}),
+                ...(data.longitude !== undefined ? { longitude: data.longitude } : {}),
             };
             return await prisma.address.update({
                 where: { id },

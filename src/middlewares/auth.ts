@@ -49,10 +49,12 @@ export function authorize(...roles: UserRole[]) {
         try {
             if (!req.user) {
                 next(new AppError("Usuário não autenticado", 401));
+                return;
             }
 
             if (roles.length > 0 && !hasAnyRole(req.user, roles)) {
                 next(new AppError("Sem permissão para este recurso", 403));
+                return;
             }
             next();
         } catch (error) {

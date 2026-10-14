@@ -2,17 +2,45 @@ import { z } from "zod";
 import prisma from '@/lib/prisma';
 import { Prisma } from "@prisma/client";
 import { hashPassword } from "@/utils/password";
+import { AppError, UserRole } from "@/types";
+import { toPublicUser } from "@/utils/user.mapper";
 
 export const userSchema = z.object({
-  id: z.string().optional(),
   name: z.string().min(1, "Name is required"),
   email: z.string().email("Invalid email address"),
   password: z.string().min(6, "Password must be at least 6 characters long"),
-  createdAt: z.date().optional(),
-  updatedAt: z.date().optional(),
+  roles: z.nativeEnum(UserRole).array().min(1).optional(),
+  clienteId: z.string().optional(),
 });
 
-export type User = z.infer<typeof userSchema>;
+export const userUpdateSchema = z.object({
+  name: z.string().min(1).optional(),
+  email: z.string().email().optional(),
+  password: z.string().min(6).optional(),
+});
+
+export type User = {
+  id: string;
+  name: string;
+  email: string;
+  roles: UserRole[];
+  createdAt: Date;
+  updatedAt: Date;
+};
+export type UserInput = z.infer<typeof userSchema>;
+export type UserUpdateInput = z.infer<typeof userUpdateSchema>;
+
+function toUserResponse(user: Prisma.UserGetPayload<{ include: { roles: true } }>): User {
+  const publicUser = toPublicUser(user);
+  return {
+    id: publicUser.id,
+    name: user.name,
+    email: publicUser.email,
+    roles: publicUser.roles,
+    createdAt: publicUser.createdAt,
+    updatedAt: publicUser.updatedAt,
+  };
+}
 
 export class UserService {
   public async getAllUsers(params: {
@@ -40,53 +68,77 @@ export class UserService {
         take: limit || 10,
         where,
         orderBy,
+        include: { roles: true },
     });
 
-    const usersWithoutPasswords = users.map(({ password, ...user }) => user);
-
-    return usersWithoutPasswords;
+    return users.map(toUserResponse);
   }
 
   public async getUserById(id: string): Promise<User | null> {
     const user = await prisma.user.findUnique({
       where: { id },
+      include: { roles: true },
     });
-    return user;
+    return user ? toUserResponse(user) : null;
   }
 
     public async createUser(
-        userData: Omit<User, "id" | "createdAt" | "updatedAt">
-    ): Promise<User> {
+        userData: UserInput
+    ) {
+        const roles = userData.roles ?? [UserRole.USER];
+        if (roles.includes(UserRole.CUSTOMER) && !userData.clienteId) {
+          throw new AppError('Conta de cliente exige um cliente vinculado', 400);
+        }
+        const { roles: _roles, clienteId, ...userFields } = userData;
         const newUser = await prisma.user.create({
         data: {
-            ...userData,
-            password: await hashPassword(userData.password),
-            createdAt: new Date(),
-            updatedAt: new Date(),
+            ...userFields,
+            password: await hashPassword(userFields.password),
+            roles: {
+              connectOrCreate: roles.map((name) => ({
+                where: { name },
+                create: { name },
+              })),
+            },
+            ...(clienteId ? { cliente: { connect: { id: clienteId } } } : {}),
         },
+        include: { roles: true },
         });
-        const { password, ...userWithoutPassword } = newUser;
-        return userWithoutPassword as User;
+        return toUserResponse(newUser);
   }
 
   public async updateUser(
-        id: string, 
-        userData: Partial<Omit<User, "id" | "createdAt" | "updatedAt">>
+        id: string,
+        userData: UserUpdateInput
     ): Promise<User | null> {
-    const updatedUser = await prisma.user.update({
-      where: { id },
-      data: {
-        ...userData,
-        updatedAt: new Date(),
-      },
-    });
-    return updatedUser;
+    try {
+      const updatedUser = await prisma.user.update({
+        where: { id },
+        data: {
+          ...(userData.name !== undefined ? { name: userData.name } : {}),
+          ...(userData.email !== undefined ? { email: userData.email } : {}),
+          ...(userData.password !== undefined ? { password: await hashPassword(userData.password) } : {}),
+        },
+        include: { roles: true },
+      });
+      return toUserResponse(updatedUser);
+    } catch (error) {
+      if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2025') {
+        return null;
+      }
+      throw error;
+    }
   }
 
   public async deleteUser(id: string): Promise<boolean> {
-    await prisma.user.delete({
-      where: { id },
-    });
-    return true;
+    try {
+      await prisma.user.delete({ where: { id } });
+      return true;
+    } catch (error) {
+      if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2025') {
+        return false;
+      }
+      throw error;
+    }
   }
 }  

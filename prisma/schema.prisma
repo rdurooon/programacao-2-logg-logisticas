@@ -16,6 +16,14 @@ model User {
     password  String
 
     roles     Role[]   @relation("users_roles")
+    cliente   Cliente?
+    assignedPackages Package[] @relation("PackageCourier")
+    packageOffers PackageOffer[]
+    packageLocations PackageLocation[]
+    packageIncidents PackageIncident[]
+    packageEvents PackageEvent[] @relation("PackageEventActor")
+    notifications UserNotification[]
+    currentLocation CourierLocation?
 
     createdAt DateTime @default(now())
     updatedAt DateTime @updatedAt
@@ -68,8 +76,10 @@ model PessoaJuridica {
 model Cliente {
     id        String    @id @default(uuid())
     pessoaId  String    @unique
+    userId    String?   @unique
 
     pessoa    Pessoa    @relation(fields: [pessoaId], references: [id], onDelete: Cascade)
+    user      User?     @relation(fields: [userId], references: [id], onDelete: SetNull)
     packages  Package[]
     addresses Address[]
 
@@ -100,9 +110,18 @@ model Package {
 
     clienteId   String
     addressId   String
+    originAddressId String?
+    courierId   String?
 
     cliente     Cliente  @relation(fields: [clienteId], references: [id])
     address     Address  @relation(fields: [addressId], references: [id])
+    originAddress Address? @relation("PackageOrigin", fields: [originAddressId], references: [id], onDelete: SetNull)
+    courier     User?    @relation("PackageCourier", fields: [courierId], references: [id], onDelete: SetNull)
+    events      PackageEvent[]
+    offers      PackageOffer[]
+    locations   PackageLocation[]
+    incidents   PackageIncident[]
+    notifications UserNotification[]
 
     status      String   @default("Pendente")
 
@@ -123,11 +142,103 @@ model Address {
     cidade       String
     estado       String
     pais         String
+    latitude     Float?
+    longitude    Float?
 
     cliente      Cliente   @relation(fields: [clienteId], references: [id], onDelete: Cascade)
     packages     Package[]
+    originPackages Package[] @relation("PackageOrigin")
 
     @@map("address")
+}
+
+model PackageEvent {
+    id        String   @id @default(uuid())
+    packageId String
+    status    String
+    details   String?
+    actorId   String?
+    createdAt DateTime @default(now())
+
+    package   Package  @relation(fields: [packageId], references: [id], onDelete: Cascade)
+    actor     User?    @relation("PackageEventActor", fields: [actorId], references: [id], onDelete: SetNull)
+
+    @@index([packageId, createdAt])
+    @@map("package_events")
+}
+
+model PackageOffer {
+    id          String   @id @default(uuid())
+    packageId   String
+    courierId   String
+    status      String   @default("PENDING")
+    createdAt   DateTime @default(now())
+    respondedAt DateTime?
+
+    package     Package  @relation(fields: [packageId], references: [id], onDelete: Cascade)
+    courier     User     @relation(fields: [courierId], references: [id], onDelete: Cascade)
+
+    @@index([packageId, status])
+    @@index([courierId, status])
+    @@map("package_offers")
+}
+
+model PackageLocation {
+    id         String   @id @default(uuid())
+    packageId  String
+    courierId  String
+    latitude   Float
+    longitude  Float
+    recordedAt DateTime @default(now())
+
+    package    Package  @relation(fields: [packageId], references: [id], onDelete: Cascade)
+    courier    User     @relation(fields: [courierId], references: [id], onDelete: Cascade)
+
+    @@index([packageId, recordedAt])
+    @@map("package_locations")
+}
+
+model CourierLocation {
+    courierId String   @id
+    latitude  Float
+    longitude Float
+    updatedAt DateTime @updatedAt
+
+    courier   User     @relation(fields: [courierId], references: [id], onDelete: Cascade)
+
+    @@index([updatedAt])
+    @@map("courier_locations")
+}
+
+model PackageIncident {
+    id           String   @id @default(uuid())
+    packageId    String
+    reporterId   String
+    description  String
+    evidenceData String   @db.Text
+    createdAt    DateTime @default(now())
+
+    package      Package  @relation(fields: [packageId], references: [id], onDelete: Cascade)
+    reporter     User     @relation(fields: [reporterId], references: [id], onDelete: Cascade)
+
+    @@index([packageId, createdAt])
+    @@map("package_incidents")
+}
+
+model UserNotification {
+    id        String   @id @default(uuid())
+    userId    String
+    packageId String?
+    title     String
+    message   String
+    readAt    DateTime?
+    createdAt DateTime @default(now())
+
+    user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+    package   Package? @relation(fields: [packageId], references: [id], onDelete: SetNull)
+
+    @@index([userId, createdAt])
+    @@map("user_notifications")
 }
 
 model Enterprise {
